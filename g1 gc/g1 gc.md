@@ -589,7 +589,7 @@ real：从垃圾回收到结束的真实时间，包括其他处理器花费的�
 [Times: user=0.00 sys=0.00, real=0.00 secs]
 ```
 
-**并发标记日志分析**
+### **并发标记日志分析**
 
 并发标记开始时，会有initial-mark标记：
 
@@ -665,13 +665,89 @@ real：从垃圾回收到结束的真实时间，包括其他处理器花费的�
 [Eden: 0.0B(51.0M)->0.0B(109.0M) Survivors: 0.0B->0.0B Heap: 1022.0M(1024.0M)->67.8M(227.0M)], [Metaspace: 3794K->3794K(1056768K)]
 ```
 
-
-
 ## 一点官方建议
 
 来自Oracle官方的jvm参数设置建议：
 
 避免使用-Xmn选项或任何其他相关选项（例如- XX:NewRatio）明确设置新生代大小。明确设置新生代大小会覆盖预期暂停时间参数项（-XX:MaxGCPauseMillis，默认200ms），影响GC后动态调整堆分区数量。
+
+## 日志分析和应用程序监控
+
+### 使用VisualVM分析堆dump文件
+
+需要在jvm启动参数里添加-Xmx1g -XX:+UseG1GC -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=heapdump.hprof 
+
+示例程序源代码如下：
+
+```java
+package com.company;
+
+import java.util.HashMap;
+
+public class StopTheWorldDemo {
+    public static class MyThread extends Thread{
+        HashMap map = new HashMap();
+        @Override
+        public void run(){
+            try{
+                while(true){
+                    if(map.size() * 512/1024/1024 >= 900) {
+                        map.clear();
+                        System.out.println("clean map");
+                    }
+                    byte[] b1;
+                    for(int i=0; i<100; i++) {
+                        b1 = new byte[512];
+                        map.put(System.nanoTime(), b1);
+                    }
+                    Thread.sleep(1);
+                }
+            } catch (Exception e) {
+            }
+        }
+    }
+
+    public static class PrintThread extends Thread {
+        public static final long starttime = System.currentTimeMillis();
+        @Override
+        public void run(){
+            try {
+                while (true) {
+                    long t = System.currentTimeMillis() - starttime;
+                    System.out.println(t/1000 + "." + t%1000);
+                    Thread.sleep(100);
+                }
+            } catch (Exception e){
+            }
+        }
+    }
+
+    public static void main(String[] args) {
+        MyThread t = new MyThread();
+        PrintThread p = new PrintThread();
+        t.start();
+        p.start();
+    }
+}
+```
+
+运行此段代码，应用程序会崩溃，生成一个堆的dump文件heapdump.hprof
+
+![屏幕截图 2020-10-06 124203](屏幕截图 2020-10-06 124203.png)
+
+用VisualVM装入分析，在“概要”标签下的基本信息栏可以看到堆dump的生成日期、大小等信息以及异常的简要信息，如上图所示。
+
+![屏幕截图 2020-10-06 124351](屏幕截图 2020-10-06 124351.png)
+
+在“堆转储上的线程”栏可以看到应用程序崩溃时的详细异常信息，由上图可知，导致崩溃的原因是线程“Thread-0”发生OOM了，定位到StopTheWorldDemo的第18行代码，即“b1 = new byte[512];”，可知此时由于给b1分配内存所以发生了OOM错误。
+
+![屏幕截图 2020-10-06 130703](屏幕截图 2020-10-06 130703.png)
+
+“类”标签下可以看到崩溃时各个类实例占用的堆内存大小，由上图可知，由于byte数组的不断分配，堆内存空间（总量1g）不足，因此应用程序抛出OOM错误。
+
+### VisualVM的VisualGC插件
+
+
 
 ## 参考资料
 
